@@ -1,5 +1,6 @@
 package server;
 
+import com.google.gson.Gson;
 import dataaccess.DataAccessException;
 import dataaccess.MemoryDataAccess;
 import io.javalin.Javalin;
@@ -16,10 +17,10 @@ import service.UserService;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Locale;
-import java.util.Map;
 
 public class Server {
 
+    private final Gson gson = new Gson();
     private Javalin javalin;
 
     // ONE shared DAO for entire server
@@ -61,40 +62,40 @@ public class Server {
         javalin.delete("/db", ctx -> {
             try {
                 clearService.clear();
-                ctx.status(200).json(Map.of());
+                ctx.status(200).result("{}");
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
         // REGISTER USER
         javalin.post("/user", ctx -> {
             try {
-                RegisterRequest request = ctx.bodyAsClass(RegisterRequest.class);
+                RegisterRequest request = gson.fromJson(ctx.body(), RegisterRequest.class);
                 var auth = userService.register(request);
-                ctx.status(200).json(auth);
+                ctx.status(200).result(gson.toJson(auth));
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
         // LOGIN
         javalin.post("/session", ctx -> {
             try {
-                LoginRequest request = ctx.bodyAsClass(LoginRequest.class);
+                LoginRequest request = gson.fromJson(ctx.body(), LoginRequest.class);
                 var auth = userService.login(request);
-                ctx.status(200).json(auth);
+                ctx.status(200).result(gson.toJson(auth));
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
@@ -103,18 +104,17 @@ public class Server {
             try {
                 String authToken = ctx.header("Authorization");
                 userService.logout(new LogoutRequest(authToken));
-                ctx.status(200).json(Map.of());
+                ctx.status(200).result("{}");
             } catch (DataAccessException e) {
-                // logout with invalid token should be unauthorized, not bad request
                 String msg = safeLower(e.getMessage());
                 if (msg.contains("bad request")) {
-                    ctx.status(401).json(error("unauthorized"));
+                    ctx.status(401).result(gson.toJson(error("unauthorized")));
                 } else {
                     handleDataAccessError(ctx, e);
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
@@ -122,20 +122,20 @@ public class Server {
         javalin.post("/game", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
-                CreateGameRequest body = ctx.bodyAsClass(CreateGameRequest.class);
+                CreateGameRequest body = gson.fromJson(ctx.body(), CreateGameRequest.class);
 
                 if (body == null || body.gameName() == null || body.gameName().isBlank()) {
-                    ctx.status(400).json(error("bad request"));
+                    ctx.status(400).result(gson.toJson(error("bad request")));
                     return;
                 }
 
                 int gameID = gameService.createGame(authToken, body.gameName());
-                ctx.status(200).json(new CreateGameResult(gameID));
+                ctx.status(200).result(gson.toJson(new CreateGameResult(gameID)));
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
@@ -143,33 +143,33 @@ public class Server {
         javalin.put("/game", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
-                JoinBody body = ctx.bodyAsClass(JoinBody.class);
+                JoinBody body = gson.fromJson(ctx.body(), JoinBody.class);
 
                 if (body == null || body.gameID() == null) {
-                    ctx.status(400).json(error("bad request"));
+                    ctx.status(400).result(gson.toJson(error("bad request")));
                     return;
                 }
 
                 String color = body.playerColor();
                 if (color == null || color.isBlank()) {
-                    ctx.status(400).json(error("bad request"));
+                    ctx.status(400).result(gson.toJson(error("bad request")));
                     return;
                 }
 
                 String upper = color.toUpperCase(Locale.ROOT);
                 if (!upper.equals("WHITE") && !upper.equals("BLACK")) {
-                    ctx.status(400).json(error("bad request"));
+                    ctx.status(400).result(gson.toJson(error("bad request")));
                     return;
                 }
 
                 gameService.joinGame(authToken, body.gameID(), upper);
-                ctx.status(200).json(Map.of());
+                ctx.status(200).result("{}");
 
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
@@ -189,12 +189,12 @@ public class Server {
                     ));
                 }
 
-                ctx.status(200).json(new ListBody(result));
+                ctx.status(200).result(gson.toJson(new ListBody(result)));
             } catch (DataAccessException e) {
                 handleDataAccessError(ctx, e);
             } catch (Exception e) {
                 e.printStackTrace();
-                ctx.status(500).json(error("internal server error"));
+                ctx.status(500).result(gson.toJson(error("internal server error")));
             }
         });
 
@@ -222,15 +222,15 @@ public class Server {
             code = 500;
         }
 
-        ctx.status(code).json(error(e.getMessage()));
+        ctx.status(code).result(gson.toJson(error(e.getMessage())));
     }
 
-    private static Object error(String message) {
+    private static ErrorBody error(String message) {
         String safe = (message == null) ? "" : message;
-        return new Object() {
-            public final String message = "Error: " + safe;
-        };
+        return new ErrorBody("Error: " + safe);
     }
+
+    private record ErrorBody(String message) {}
 
     private static String safeLower(String s) {
         return (s == null) ? "" : s.toLowerCase(Locale.ROOT);
