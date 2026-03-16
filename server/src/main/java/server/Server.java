@@ -1,0 +1,238 @@
+package server;
+
+import dataaccess.DataAccessException;
+import dataaccess.MemoryDataAccess;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.staticfiles.Location;
+import model.GameData;
+import service.ClearService;
+import service.GameService;
+import service.LoginRequest;
+import service.LogoutRequest;
+import service.RegisterRequest;
+import service.UserService;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Locale;
+import java.util.Map;
+
+public class Server {
+
+    private Javalin javalin;
+
+    // ONE shared DAO for entire server
+    private final MemoryDataAccess dao = new MemoryDataAccess();
+
+    // Services share same DAO
+    private final ClearService clearService = new ClearService(dao);
+    private final UserService userService = new UserService(dao);
+    private final GameService gameService = new GameService(dao);
+
+    // Used only for parsing PUT /game body
+    private record JoinBody(String playerColor, Integer gameID) {}
+
+    // Used only for GET /game response entries
+    private record ListGame(
+            int gameID,
+            String whiteUsername,
+            String blackUsername,
+            String gameName
+    ) {}
+
+    // Used only for wrapping GET /game response
+    private record ListBody(Collection<ListGame> games) {}
+
+    // Small DTOs for create-game
+    public record CreateGameRequest(String gameName) {}
+    public record CreateGameResult(int gameID) {}
+
+    public int run(int port) {
+        javalin = Javalin.create(config -> {
+            config.staticFiles.add(staticFiles -> {
+                staticFiles.hostedPath = "/";
+                staticFiles.directory = "/web";
+                staticFiles.location = Location.CLASSPATH;
+            });
+        });
+
+        // CLEAR DATABASE
+        javalin.delete("/db", ctx -> {
+            try {
+                clearService.clear();
+                ctx.status(200).json(Map.of());
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // REGISTER USER
+        javalin.post("/user", ctx -> {
+            try {
+                RegisterRequest request = ctx.bodyAsClass(RegisterRequest.class);
+                var auth = userService.register(request);
+                ctx.status(200).json(auth);
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // LOGIN
+        javalin.post("/session", ctx -> {
+            try {
+                LoginRequest request = ctx.bodyAsClass(LoginRequest.class);
+                var auth = userService.login(request);
+                ctx.status(200).json(auth);
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // LOGOUT
+        javalin.delete("/session", ctx -> {
+            try {
+                String authToken = ctx.header("Authorization");
+                userService.logout(new LogoutRequest(authToken));
+                ctx.status(200).json(Map.of());
+            } catch (DataAccessException e) {
+                // logout with invalid token should be unauthorized, not bad request
+                String msg = safeLower(e.getMessage());
+                if (msg.contains("bad request")) {
+                    ctx.status(401).json(error("unauthorized"));
+                } else {
+                    handleDataAccessError(ctx, e);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // CREATE GAME
+        javalin.post("/game", ctx -> {
+            try {
+                String authToken = ctx.header("Authorization");
+                CreateGameRequest body = ctx.bodyAsClass(CreateGameRequest.class);
+
+                if (body == null || body.gameName() == null || body.gameName().isBlank()) {
+                    ctx.status(400).json(error("bad request"));
+                    return;
+                }
+
+                int gameID = gameService.createGame(authToken, body.gameName());
+                ctx.status(200).json(new CreateGameResult(gameID));
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // JOIN GAME
+        javalin.put("/game", ctx -> {
+            try {
+                String authToken = ctx.header("Authorization");
+                JoinBody body = ctx.bodyAsClass(JoinBody.class);
+
+                if (body == null || body.gameID() == null) {
+                    ctx.status(400).json(error("bad request"));
+                    return;
+                }
+
+                String color = body.playerColor();
+                if (color == null || color.isBlank()) {
+                    ctx.status(400).json(error("bad request"));
+                    return;
+                }
+
+                String upper = color.toUpperCase(Locale.ROOT);
+                if (!upper.equals("WHITE") && !upper.equals("BLACK")) {
+                    ctx.status(400).json(error("bad request"));
+                    return;
+                }
+
+                gameService.joinGame(authToken, body.gameID(), upper);
+                ctx.status(200).json(Map.of());
+
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        // LIST GAMES
+        javalin.get("/game", ctx -> {
+            try {
+                String authToken = ctx.header("Authorization");
+                Collection<GameData> games = gameService.listGames(authToken);
+
+                Collection<ListGame> result = new ArrayList<>();
+                for (GameData game : games) {
+                    result.add(new ListGame(
+                            game.gameID(),
+                            game.whiteUsername(),
+                            game.blackUsername(),
+                            game.gameName()
+                    ));
+                }
+
+                ctx.status(200).json(new ListBody(result));
+            } catch (DataAccessException e) {
+                handleDataAccessError(ctx, e);
+            } catch (Exception e) {
+                e.printStackTrace();
+                ctx.status(500).json(error("internal server error"));
+            }
+        });
+
+        javalin.start(port);
+        return javalin.port();
+    }
+
+    public void stop() {
+        if (javalin != null) {
+            javalin.stop();
+        }
+    }
+
+    private void handleDataAccessError(Context ctx, DataAccessException e) {
+        String msg = safeLower(e.getMessage());
+
+        int code;
+        if (msg.contains("unauthorized")) {
+            code = 401;
+        } else if (msg.contains("already taken")) {
+            code = 403;
+        } else if (msg.contains("bad request") || msg.contains("game not found")) {
+            code = 400;
+        } else {
+            code = 500;
+        }
+
+        ctx.status(code).json(error(e.getMessage()));
+    }
+
+    private static Object error(String message) {
+        String safe = (message == null) ? "" : message;
+        return new Object() {
+            public final String message = "Error: " + safe;
+        };
+    }
+
+    private static String safeLower(String s) {
+        return (s == null) ? "" : s.toLowerCase(Locale.ROOT);
+    }
+}

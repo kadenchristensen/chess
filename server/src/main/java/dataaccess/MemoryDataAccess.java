@@ -1,5 +1,11 @@
 package dataaccess;
 
+import java.util.ArrayList;
+import java.util.Collection;
+
+
+
+
 import model.AuthData;
 import model.GameData;
 import model.UserData;
@@ -106,11 +112,21 @@ public class MemoryDataAccess implements DataAccess {
 
     @Override
     public Collection<GameData> listGames() throws DataAccessException {
-        return List.of();
+        return new java.util.ArrayList<>(games.values());
     }
 
     @Override
     public void updateGame(GameData game) throws DataAccessException {
+
+        if (game == null) {
+            throw new DataAccessException("game is null");
+        }
+
+        if (!games.containsKey(game.gameID())) {
+            throw new DataAccessException("game not found");
+        }
+
+        games.put(game.gameID(), game);
 
     }
 }
