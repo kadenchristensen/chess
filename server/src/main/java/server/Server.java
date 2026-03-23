@@ -1,8 +1,9 @@
 package server;
 
 import com.google.gson.Gson;
+import dataaccess.DataAccess;
 import dataaccess.DataAccessException;
-import dataaccess.MemoryDataAccess;
+import dataaccess.MySqlDataAccess;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
@@ -23,13 +24,13 @@ public class Server {
     private final Gson gson = new Gson();
     private Javalin javalin;
 
-    // ONE shared DAO for entire server
-    private final MemoryDataAccess dao = new MemoryDataAccess();
+    // Use interface instead of MemoryDataAccess
+    private final DataAccess dao;
 
     // Services share same DAO
-    private final ClearService clearService = new ClearService(dao);
-    private final UserService userService = new UserService(dao);
-    private final GameService gameService = new GameService(dao);
+    private final ClearService clearService;
+    private final UserService userService;
+    private final GameService gameService;
 
     // Used only for parsing PUT /game body
     private record JoinBody(String playerColor, Integer gameID) {}
@@ -48,6 +49,19 @@ public class Server {
     // Small DTOs for create-game
     public record CreateGameRequest(String gameName) {}
     public record CreateGameResult(int gameID) {}
+
+    // Constructor initializes MySQL DAO
+    public Server() {
+        try {
+            dao = new MySqlDataAccess();
+        } catch (DataAccessException e) {
+            throw new RuntimeException(e);
+        }
+
+        clearService = new ClearService(dao);
+        userService = new UserService(dao);
+        gameService = new GameService(dao);
+    }
 
     public int run(int port) {
         javalin = Javalin.create(config -> {

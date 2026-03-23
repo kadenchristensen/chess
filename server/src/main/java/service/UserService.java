@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import dataaccess.DataAccess;
 import dataaccess.DataAccessException;
+import org.mindrot.jbcrypt.BCrypt;
 
 public class UserService {
 
@@ -15,8 +16,6 @@ public class UserService {
     public UserService(DataAccess dataAccess) {
         this.dataAccess = dataAccess;
     }
-    // register + login + logout will go here next
-
 
     public AuthData register(RegisterRequest request) throws DataAccessException {
 
@@ -27,23 +26,21 @@ public class UserService {
             throw new DataAccessException("bad request");
         }
 
-        // check if user already exists
         if (dataAccess.getUser(request.username()) != null) {
             throw new DataAccessException("already taken");
         }
 
-        // create user
+        String hashedPassword = BCrypt.hashpw(request.password(), BCrypt.gensalt());
+
         UserData user = new UserData(
                 request.username(),
-                request.password(),
+                hashedPassword,
                 request.email()
         );
 
         dataAccess.createUser(user);
 
-        // generate auth token
         String token = UUID.randomUUID().toString();
-
         AuthData auth = new AuthData(token, request.username());
 
         dataAccess.createAuth(auth);
@@ -61,7 +58,7 @@ public class UserService {
 
         UserData user = dataAccess.getUser(request.username());
 
-        if (user == null || !user.password().equals(request.password())) {
+        if (user == null || !BCrypt.checkpw(request.password(), user.password())) {
             throw new DataAccessException("unauthorized");
         }
 
@@ -78,14 +75,10 @@ public class UserService {
             throw new DataAccessException("bad request");
         }
 
-        // must exist to be valid
         if (dataAccess.getAuth(request.authToken()) == null) {
             throw new DataAccessException("unauthorized");
         }
 
         dataAccess.deleteAuth(request.authToken());
     }
-
-
 }
-
