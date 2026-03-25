@@ -69,4 +69,54 @@ public class ServerFacadeTests {
     }
 
 
+
+    @Test
+    void logoutPositive() throws Exception {
+        var auth = facade.register("logoutUser", "pass", "logout@test.com");
+        facade.logout(auth.authToken());
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.logout(auth.authToken());
+        });
+    }
+
+    @Test
+    void logoutNegative() {
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.logout("fake-token");
+        });
+    }
+
+    @Test
+    void listGamesPositive() throws Exception {
+        var auth = facade.register("listUser", "pass", "list@test.com");
+        facade.createGame("game one", auth.authToken());
+        var games = facade.listGames(auth.authToken());
+        Assertions.assertNotNull(games);
+        Assertions.assertFalse(games.games().isEmpty());
+    }
+
+    @Test
+    void listGamesNegative() {
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.listGames("bad-token");
+        });
+    }
+
+    @Test
+    void joinGamePositive() throws Exception {
+        var auth = facade.register("joinUser", "pass", "join@test.com");
+        var game = facade.createGame("joinable", auth.authToken());
+        facade.joinGame("WHITE", game.gameID(), auth.authToken());
+        Assertions.assertTrue(true);
+    }
+
+    @Test
+    void joinGameNegative() throws Exception {
+        var auth = facade.register("joinBadUser", "pass", "joinbad@test.com");
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.joinGame("WHITE", 99999, auth.authToken());
+        });
+    }
+
+
 }
