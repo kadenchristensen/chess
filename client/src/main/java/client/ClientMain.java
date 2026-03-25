@@ -16,8 +16,18 @@ public class ClientMain {
     private String authToken = null;
     private String username = null;
 
-    // Stores the last list of games shown to the user
     private List<GameData> lastListedGames = new ArrayList<>();
+
+    // ANSI colors
+    private static final String RESET = "\u001B[0m";
+    private static final String BLACK_TEXT = "\u001B[30m";
+    private static final String RED_TEXT = "\u001B[31m";
+    private static final String BLUE_TEXT = "\u001B[34m";
+    private static final String WHITE_TEXT = "\u001B[37m";
+
+    private static final String BLACK_BG = "\u001B[40m";
+    private static final String LIGHT_BG = "\u001B[47m";
+    private static final String DARK_BG = "\u001B[100m";
 
     public ClientMain() {
         this("http://localhost:8080");
@@ -37,18 +47,16 @@ public class ClientMain {
 
     public void run() {
         System.out.println("Welcome to Chess");
-        System.out.println("Connected to " + getServerLabel());
+        System.out.println("Connected to server");
 
         while (running) {
             try {
                 if (!loggedIn) {
                     System.out.print("\n[LOGGED_OUT] >>> ");
-                    String input = scanner.nextLine().trim().toLowerCase();
-                    evalLoggedOut(input);
+                    evalLoggedOut(scanner.nextLine().trim().toLowerCase());
                 } else {
                     System.out.print("\n[LOGGED_IN] >>> ");
-                    String input = scanner.nextLine().trim().toLowerCase();
-                    evalLoggedIn(input);
+                    evalLoggedIn(scanner.nextLine().trim().toLowerCase());
                 }
             } catch (Exception e) {
                 System.out.println("Error: " + friendlyMessage(e));
@@ -59,13 +67,13 @@ public class ClientMain {
     private void evalLoggedOut(String input) {
         switch (input) {
             case "help" -> System.out.println(loggedOutHelp());
+            case "register" -> register();
+            case "login" -> login();
             case "quit" -> {
                 System.out.println("Goodbye");
                 running = false;
             }
-            case "register" -> register();
-            case "login" -> login();
-            default -> System.out.println("Unknown command. Type 'help' to see options.");
+            default -> System.out.println("Unknown command");
         }
     }
 
@@ -81,28 +89,29 @@ public class ClientMain {
                 System.out.println("Goodbye");
                 running = false;
             }
-            default -> System.out.println("Unknown command. Type 'help' to see options.");
+            default -> System.out.println("Unknown command");
         }
     }
 
     private void register() {
         try {
             System.out.print("username: ");
-            String username = scanner.nextLine().trim();
+            String username = scanner.nextLine();
 
             System.out.print("password: ");
-            String password = scanner.nextLine().trim();
+            String password = scanner.nextLine();
 
             System.out.print("email: ");
-            String email = scanner.nextLine().trim();
+            String email = scanner.nextLine();
 
             var auth = facade.register(username, password, email);
+
             this.authToken = auth.authToken();
             this.username = auth.username();
             this.loggedIn = true;
 
-            System.out.println("Successfully registered and logged in as " + this.username);
-            System.out.println(loggedInHelp());
+            System.out.println("Successfully registered and logged in as " + username);
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -111,18 +120,19 @@ public class ClientMain {
     private void login() {
         try {
             System.out.print("username: ");
-            String username = scanner.nextLine().trim();
+            String username = scanner.nextLine();
 
             System.out.print("password: ");
-            String password = scanner.nextLine().trim();
+            String password = scanner.nextLine();
 
             var auth = facade.login(username, password);
+
             this.authToken = auth.authToken();
             this.username = auth.username();
             this.loggedIn = true;
 
-            System.out.println("Successfully logged in as " + this.username);
-            System.out.println(loggedInHelp());
+            System.out.println("Logged in as " + username);
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -131,12 +141,12 @@ public class ClientMain {
     private void logout() {
         try {
             facade.logout(authToken);
+            loggedIn = false;
             authToken = null;
             username = null;
-            loggedIn = false;
             lastListedGames.clear();
-            System.out.println("Logged out successfully.");
-            System.out.println(loggedOutHelp());
+            System.out.println("Logged out");
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -145,10 +155,11 @@ public class ClientMain {
     private void createGame() {
         try {
             System.out.print("game name: ");
-            String gameName = scanner.nextLine().trim();
+            String name = scanner.nextLine();
 
-            var result = facade.createGame(gameName, authToken);
-            System.out.println("Game created successfully. Game ID: " + result.gameID());
+            var result = facade.createGame(name, authToken);
+            System.out.println("Created game ID: " + result.gameID());
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -158,24 +169,23 @@ public class ClientMain {
         try {
             var result = facade.listGames(authToken);
 
-            lastListedGames = new ArrayList<>();
-            if (result.games() != null) {
-                lastListedGames.addAll(result.games());
-            }
+            lastListedGames = new ArrayList<>(result.games());
 
             if (lastListedGames.isEmpty()) {
-                System.out.println("No games found.");
+                System.out.println("No games found");
                 return;
             }
 
-            int index = 1;
-            for (var game : lastListedGames) {
-                String white = (game.whiteUsername() == null) ? "(open)" : game.whiteUsername();
-                String black = (game.blackUsername() == null) ? "(open)" : game.blackUsername();
+            int i = 1;
+            for (var g : lastListedGames) {
+                String white = (g.whiteUsername() == null) ? "(open)" : g.whiteUsername();
+                String black = (g.blackUsername() == null) ? "(open)" : g.blackUsername();
 
-                System.out.printf("%d. %s | White: %s | Black: %s%n",
-                        index++, game.gameName(), white, black);
+                System.out.println(i++ + ". " + g.gameName() +
+                        " | White: " + white +
+                        " | Black: " + black);
             }
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -184,39 +194,34 @@ public class ClientMain {
     private void playGame() {
         try {
             if (lastListedGames.isEmpty()) {
-                System.out.println("No previously listed games. Use 'list games' first.");
+                System.out.println("Run 'list games' first");
                 return;
             }
 
             System.out.print("Enter game number: ");
-            int selection = Integer.parseInt(scanner.nextLine().trim());
+            int choice = Integer.parseInt(scanner.nextLine());
 
-            if (selection < 1 || selection > lastListedGames.size()) {
-                System.out.println("Invalid game number.");
+            if (choice < 1 || choice > lastListedGames.size()) {
+                System.out.println("Invalid game number");
                 return;
             }
-
-            GameData chosenGame = lastListedGames.get(selection - 1);
 
             System.out.print("Enter color (WHITE or BLACK): ");
             String color = scanner.nextLine().trim().toUpperCase();
 
             if (!color.equals("WHITE") && !color.equals("BLACK")) {
-                System.out.println("Invalid color. Choose WHITE or BLACK.");
+                System.out.println("Invalid color");
                 return;
             }
 
-            facade.joinGame(color, chosenGame.gameID(), authToken);
-            System.out.println("Joined game: " + chosenGame.gameName() + " as " + color);
+            GameData game = lastListedGames.get(choice - 1);
 
-            if (color.equals("BLACK")) {
-                drawBoard(true);
-            } else {
-                drawBoard(false);
-            }
+            facade.joinGame(color, game.gameID(), authToken);
 
-        } catch (NumberFormatException e) {
-            System.out.println("Error: please enter a valid number.");
+            System.out.println("Joined game: " + game.gameName() + " as " + color);
+
+            drawBoard(color.equals("BLACK"));
+
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -225,25 +230,24 @@ public class ClientMain {
     private void observeGame() {
         try {
             if (lastListedGames.isEmpty()) {
-                System.out.println("No previously listed games. Use 'list games' first.");
+                System.out.println("Run 'list games' first");
                 return;
             }
 
             System.out.print("Enter game number: ");
-            int selection = Integer.parseInt(scanner.nextLine().trim());
+            int choice = Integer.parseInt(scanner.nextLine());
 
-            if (selection < 1 || selection > lastListedGames.size()) {
-                System.out.println("Invalid game number.");
+            if (choice < 1 || choice > lastListedGames.size()) {
+                System.out.println("Invalid game number");
                 return;
             }
 
-            GameData chosenGame = lastListedGames.get(selection - 1);
-            System.out.println("Observing game: " + chosenGame.gameName());
+            GameData game = lastListedGames.get(choice - 1);
+
+            System.out.println("Observing game: " + game.gameName());
 
             drawBoard(false);
 
-        } catch (NumberFormatException e) {
-            System.out.println("Error: please enter a valid number.");
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
@@ -261,99 +265,117 @@ public class ClientMain {
                 {"R", "N", "B", "Q", "K", "B", "N", "R"}
         };
 
-        if (!blackPerspective) {
-            printWhiteBoard(board);
-        } else {
+        if (blackPerspective) {
             printBlackBoard(board);
+        } else {
+            printWhiteBoard(board);
         }
     }
 
     private void printWhiteBoard(String[][] board) {
         System.out.println();
-        System.out.println("    a   b   c   d   e   f   g   h");
-        for (int row = 7; row >= 0; row--) {
-            System.out.print(" " + (row + 1) + " ");
+        printHeader("a", "b", "c", "d", "e", "f", "g", "h");
+
+        for (int row = 0; row < 8; row++) {
+            int displayRow = 8 - row;
+            printBorderNumber(displayRow);
+
             for (int col = 0; col < 8; col++) {
-                String piece = board[row][col];
-                if (piece.equals(" ")) {
-                    System.out.print(" . ");
-                } else {
-                    System.out.print(" " + piece + " ");
-                }
+                printSquare(board[row][col], row, col);
             }
-            System.out.println(" " + (row + 1));
+
+            printBorderNumber(displayRow);
+            System.out.println();
         }
-        System.out.println("    a   b   c   d   e   f   g   h");
+
+        printHeader("a", "b", "c", "d", "e", "f", "g", "h");
         System.out.println();
     }
 
     private void printBlackBoard(String[][] board) {
         System.out.println();
-        System.out.println("    h   g   f   e   d   c   b   a");
-        for (int row = 0; row < 8; row++) {
-            System.out.print(" " + (row + 1) + " ");
+        printHeader("h", "g", "f", "e", "d", "c", "b", "a");
+
+        for (int row = 7; row >= 0; row--) {
+            int displayRow = 8 - row;
+            printBorderNumber(displayRow);
+
             for (int col = 7; col >= 0; col--) {
-                String piece = board[row][col];
-                if (piece.equals(" ")) {
-                    System.out.print(" . ");
-                } else {
-                    System.out.print(" " + piece + " ");
-                }
+                printSquare(board[row][col], row, col);
             }
-            System.out.println(" " + (row + 1));
+
+            printBorderNumber(displayRow);
+            System.out.println();
         }
-        System.out.println("    h   g   f   e   d   c   b   a");
+
+        printHeader("h", "g", "f", "e", "d", "c", "b", "a");
         System.out.println();
     }
 
-    private String getServerLabel() {
-        return "server";
+    private void printHeader(String a, String b, String c, String d,
+                             String e, String f, String g, String h) {
+        System.out.print(BLACK_BG + WHITE_TEXT);
+        System.out.printf("    %s  %s  %s  %s  %s  %s  %s  %s    ",
+                a, b, c, d, e, f, g, h);
+        System.out.print(RESET);
+        System.out.println();
+    }
+
+    private void printBorderNumber(int number) {
+        System.out.print(BLACK_BG + WHITE_TEXT);
+        System.out.printf(" %d ", number);
+        System.out.print(RESET);
+    }
+
+    private void printSquare(String piece, int row, int col) {
+        boolean light = (row + col) % 2 == 0;
+        String bg = light ? LIGHT_BG : DARK_BG;
+
+        System.out.print(bg);
+
+        if (piece.equals(" ")) {
+            System.out.print("   ");
+        } else if (Character.isUpperCase(piece.charAt(0))) {
+            System.out.print(RED_TEXT + " " + piece + " ");
+        } else {
+            System.out.print(BLUE_TEXT + " " + piece + " ");
+        }
+
+        System.out.print(RESET);
     }
 
     private String friendlyMessage(Exception e) {
         String msg = e.getMessage();
-        if (msg == null || msg.isBlank()) {
-            return "operation failed";
-        }
+        if (msg == null) return "operation failed";
 
-        String lower = msg.toLowerCase();
+        msg = msg.toLowerCase();
 
-        if (lower.contains("connection refused") || lower.contains("failed to connect")) {
-            return "could not connect to the server";
-        }
-        if (lower.contains("already taken")) {
-            return "that username is already taken";
-        }
-        if (lower.contains("unauthorized")) {
-            return "username/password or authorization was rejected";
-        }
-        if (lower.contains("bad request")) {
-            return "the server rejected the request";
-        }
+        if (msg.contains("connect")) return "could not connect to server";
+        if (msg.contains("taken")) return "username already taken";
+        if (msg.contains("unauthorized")) return "invalid login";
+        if (msg.contains("bad request")) return "bad request";
 
         return msg;
     }
 
     private String loggedOutHelp() {
         return """
-                Commands:
-                  help      - show available commands
-                  login     - log in to an existing account
-                  register  - create a new account
-                  quit      - exit the program
+                help      - show commands
+                register  - create account
+                login     - log in
+                quit      - exit
                 """;
     }
 
     private String loggedInHelp() {
         return """
-                Commands:
-                  help          - show available commands
-                  logout        - log out
-                  create game   - create a new game
-                  list games    - list current games
-                  play game     - join a game as white or black
-                  observe game  - observe an existing game
-                  quit          - exit the program
+                help          - show commands
+                logout        - log out
+                create game   - create a game
+                list games    - list games
+                play game     - join a game
+                observe game  - watch a game
+                quit          - exit
                 """;
     }
 }
