@@ -37,4 +37,36 @@ public class ServerFacadeTests {
             facade.register(null, null, null);
         });
     }
+
+
+
+    @Test
+    void loginPositive() throws Exception {
+        facade.register("user2", "pass", "user2@test.com");
+        var auth = facade.login("user2", "pass");
+        Assertions.assertNotNull(auth);
+    }
+
+    @Test
+    void loginNegative() {
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.login("ghost", "wrong");
+        });
+    }
+
+    @Test
+    void createGamePositive() throws Exception {
+        var auth = facade.register("user3", "pass", "user3@test.com");
+        var result = facade.createGame("test game", auth.authToken());
+        Assertions.assertTrue(result.gameID() > 0);
+    }
+
+    @Test
+    void createGameNegative() {
+        Assertions.assertThrows(Exception.class, () -> {
+            facade.createGame("bad game", "not-a-real-token");
+        });
+    }
+
+
 }
