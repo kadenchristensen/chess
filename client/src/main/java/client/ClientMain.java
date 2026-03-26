@@ -194,15 +194,21 @@ public class ClientMain {
     private void playGame() {
         try {
             if (lastListedGames.isEmpty()) {
-                System.out.println("Run 'list games' first");
+                System.out.println("Error: no listed games found");
                 return;
             }
 
             System.out.print("Enter game number: ");
-            int choice = Integer.parseInt(scanner.nextLine());
+            int choice;
+            try {
+                choice = Integer.parseInt(scanner.nextLine());
+            } catch (NumberFormatException e) {
+                System.out.println("Error: invalid game number");
+                return;
+            }
 
             if (choice < 1 || choice > lastListedGames.size()) {
-                System.out.println("Invalid game number");
+                System.out.println("Error: invalid game number");
                 return;
             }
 
@@ -210,7 +216,7 @@ public class ClientMain {
             String color = scanner.nextLine().trim().toUpperCase();
 
             if (!color.equals("WHITE") && !color.equals("BLACK")) {
-                System.out.println("Invalid color");
+                System.out.println("Error: invalid color");
                 return;
             }
 
@@ -230,15 +236,21 @@ public class ClientMain {
     private void observeGame() {
         try {
             if (lastListedGames.isEmpty()) {
-                System.out.println("Run 'list games' first");
+                System.out.println("Error: no listed games found");
                 return;
             }
 
             System.out.print("Enter game number: ");
-            int choice = Integer.parseInt(scanner.nextLine());
+            int choice;
+            try {
+                choice = Integer.parseInt(scanner.nextLine());
+            } catch (NumberFormatException e) {
+                System.out.println("Error: invalid game number");
+                return;
+            }
 
             if (choice < 1 || choice > lastListedGames.size()) {
-                System.out.println("Invalid game number");
+                System.out.println("Error: invalid game number");
                 return;
             }
 
@@ -274,74 +286,48 @@ public class ClientMain {
 
     private void printWhiteBoard(String[][] board) {
         System.out.println();
-        printHeader("a", "b", "c", "d", "e", "f", "g", "h");
+        System.out.println("    a  b  c  d  e  f  g  h");
 
         for (int row = 0; row < 8; row++) {
             int displayRow = 8 - row;
-            printBorderNumber(displayRow);
+            System.out.print(" " + displayRow + " ");
 
             for (int col = 0; col < 8; col++) {
-                printSquare(board[row][col], row, col);
+                printSquare(board[row][col]);
             }
 
-            printBorderNumber(displayRow);
-            System.out.println();
+            System.out.println(" " + displayRow);
         }
 
-        printHeader("a", "b", "c", "d", "e", "f", "g", "h");
+        System.out.println("    a  b  c  d  e  f  g  h");
         System.out.println();
     }
 
     private void printBlackBoard(String[][] board) {
         System.out.println();
-        printHeader("h", "g", "f", "e", "d", "c", "b", "a");
+        System.out.println("    h  g  f  e  d  c  b  a");
 
         for (int row = 7; row >= 0; row--) {
             int displayRow = 8 - row;
-            printBorderNumber(displayRow);
+            System.out.print(" " + displayRow + " ");
 
             for (int col = 7; col >= 0; col--) {
-                printSquare(board[row][col], row, col);
+                printSquare(board[row][col]);
             }
 
-            printBorderNumber(displayRow);
-            System.out.println();
+            System.out.println(" " + displayRow);
         }
 
-        printHeader("h", "g", "f", "e", "d", "c", "b", "a");
+        System.out.println("    h  g  f  e  d  c  b  a");
         System.out.println();
     }
 
-    private void printHeader(String a, String b, String c, String d,
-                             String e, String f, String g, String h) {
-        System.out.print(BLACK_BG + WHITE_TEXT);
-        System.out.printf("    %s  %s  %s  %s  %s  %s  %s  %s    ",
-                a, b, c, d, e, f, g, h);
-        System.out.print(RESET);
-        System.out.println();
-    }
-
-    private void printBorderNumber(int number) {
-        System.out.print(BLACK_BG + WHITE_TEXT);
-        System.out.printf(" %d ", number);
-        System.out.print(RESET);
-    }
-
-    private void printSquare(String piece, int row, int col) {
-        boolean light = (row + col) % 2 == 0;
-        String bg = light ? LIGHT_BG : DARK_BG;
-
-        System.out.print(bg);
-
+    private void printSquare(String piece) {
         if (piece.equals(" ")) {
-            System.out.print("   ");
-        } else if (Character.isUpperCase(piece.charAt(0))) {
-            System.out.print(RED_TEXT + " " + piece + " ");
+            System.out.print(" . ");
         } else {
-            System.out.print(BLUE_TEXT + " " + piece + " ");
+            System.out.print(" " + piece + " ");
         }
-
-        System.out.print(RESET);
     }
 
     private String friendlyMessage(Exception e) {
