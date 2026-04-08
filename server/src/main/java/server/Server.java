@@ -14,6 +14,7 @@ import service.LoginRequest;
 import service.LogoutRequest;
 import service.RegisterRequest;
 import service.UserService;
+import websocket.commands.UserGameCommand;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -24,18 +25,14 @@ public class Server {
     private final Gson gson = new Gson();
     private Javalin javalin;
 
-    // Use interface instead of MemoryDataAccess
     private final DataAccess dao;
 
-    // Services share same DAO
     private final ClearService clearService;
     private final UserService userService;
     private final GameService gameService;
 
-    // Used only for parsing PUT /game body
     private record JoinBody(String playerColor, Integer gameID) {}
 
-    // Used only for GET /game response entries
     private record ListGame(
             int gameID,
             String whiteUsername,
@@ -43,14 +40,11 @@ public class Server {
             String gameName
     ) {}
 
-    // Used only for wrapping GET /game response
     private record ListBody(Collection<ListGame> games) {}
 
-    // Small DTOs for create-game
     public record CreateGameRequest(String gameName) {}
     public record CreateGameResult(int gameID) {}
 
-    // Constructor initializes MySQL DAO
     public Server() {
         try {
             dao = new MySqlDataAccess();
@@ -72,7 +66,17 @@ public class Server {
             });
         });
 
-        // CLEAR DATABASE
+        javalin.ws("/ws", ctx -> {
+            ctx.onConnect(session -> {
+                System.out.println("WebSocket connected");
+            });
+
+            ctx.onMessage(messageContext -> {
+                UserGameCommand command = gson.fromJson(messageContext.message(), UserGameCommand.class);
+                System.out.println("WebSocket command: " + command.getCommandType());
+            });
+        });
+
         javalin.delete("/db", ctx -> {
             try {
                 clearService.clear();
@@ -85,7 +89,6 @@ public class Server {
             }
         });
 
-        // REGISTER USER
         javalin.post("/user", ctx -> {
             try {
                 RegisterRequest request = gson.fromJson(ctx.body(), RegisterRequest.class);
@@ -99,7 +102,6 @@ public class Server {
             }
         });
 
-        // LOGIN
         javalin.post("/session", ctx -> {
             try {
                 LoginRequest request = gson.fromJson(ctx.body(), LoginRequest.class);
@@ -113,7 +115,6 @@ public class Server {
             }
         });
 
-        // LOGOUT
         javalin.delete("/session", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
@@ -132,7 +133,6 @@ public class Server {
             }
         });
 
-        // CREATE GAME
         javalin.post("/game", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
@@ -153,7 +153,6 @@ public class Server {
             }
         });
 
-        // JOIN GAME
         javalin.put("/game", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
@@ -187,7 +186,6 @@ public class Server {
             }
         });
 
-        // LIST GAMES
         javalin.get("/game", ctx -> {
             try {
                 String authToken = ctx.header("Authorization");
