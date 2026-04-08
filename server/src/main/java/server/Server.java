@@ -15,6 +15,7 @@ import service.LogoutRequest;
 import service.RegisterRequest;
 import service.UserService;
 import websocket.commands.UserGameCommand;
+import websocket.messages.ErrorMessage;
 
 import java.util.ArrayList;
 import java.util.Collection;
