@@ -16,6 +16,7 @@ import service.RegisterRequest;
 import service.UserService;
 import websocket.commands.UserGameCommand;
 import websocket.messages.ErrorMessage;
+import websocket.messages.LoadGameMessage;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -73,11 +74,38 @@ public class Server {
             });
 
             ctx.onMessage(messageContext -> {
-                UserGameCommand command = gson.fromJson(messageContext.message(), UserGameCommand.class);
-                System.out.println("WebSocket command: " + command.getCommandType());
+                try {
+                    UserGameCommand command = gson.fromJson(messageContext.message(), UserGameCommand.class);
+                    System.out.println("WebSocket command: " + command.getCommandType());
 
-                ErrorMessage error = new ErrorMessage("Error: websocket reached server");
-                messageContext.send(gson.toJson(error));
+                    if (command.getCommandType() == UserGameCommand.CommandType.CONNECT) {
+
+                        var auth = dao.getAuth(command.getAuthToken());
+                        if (auth == null) {
+                            ErrorMessage error = new ErrorMessage("Error: unauthorized");
+                            messageContext.send(gson.toJson(error));
+                            return;
+                        }
+
+                        var game = dao.getGame(command.getGameID());
+                        if (game == null) {
+                            ErrorMessage error = new ErrorMessage("Error: bad request");
+                            messageContext.send(gson.toJson(error));
+                            return;
+                        }
+
+                        LoadGameMessage loadGameMessage = new LoadGameMessage(game.game());
+                        messageContext.send(gson.toJson(loadGameMessage));
+                        return;
+                    }
+
+                    ErrorMessage error = new ErrorMessage("Error: websocket reached server");
+                    messageContext.send(gson.toJson(error));
+
+                } catch (Exception e) {
+                    ErrorMessage error = new ErrorMessage("Error: " + e.getMessage());
+                    messageContext.send(gson.toJson(error));
+                }
             });
         });
 
