@@ -75,6 +75,9 @@ public class Server {
             ctx.onMessage(messageContext -> {
                 UserGameCommand command = gson.fromJson(messageContext.message(), UserGameCommand.class);
                 System.out.println("WebSocket command: " + command.getCommandType());
+
+                ErrorMessage error = new ErrorMessage("Error: websocket reached server");
+                messageContext.send(gson.toJson(error));
             });
         });
 
