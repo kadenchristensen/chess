@@ -140,6 +140,11 @@ public class Server {
                             return;
                         }
 
+                        if (game.game().isGameOver()) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: game already over")));
+                            return;
+                        }
+
                         if (isObserver(auth, game)) {
                             messageContext.send(gson.toJson(new ErrorMessage("Error: observers cannot make moves")));
                             return;
@@ -165,6 +170,46 @@ public class Server {
                                 game.gameID(),
                                 messageContext,
                                 new NotificationMessage(auth.username() + " made a move")
+                        );
+                        return;
+                    }
+
+                    if (command.getCommandType() == UserGameCommand.CommandType.RESIGN) {
+                        AuthData auth = dao.getAuth(command.getAuthToken());
+                        if (auth == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: unauthorized")));
+                            return;
+                        }
+
+                        GameData game = dao.getGame(command.getGameID());
+                        if (game == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: bad request")));
+                            return;
+                        }
+
+                        if (isObserver(auth, game)) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: observers cannot resign")));
+                            return;
+                        }
+
+                        if (game.game().isGameOver()) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: game already over")));
+                            return;
+                        }
+
+                        game.game().setGameOver(true);
+
+                        dao.updateGame(new GameData(
+                                game.gameID(),
+                                game.whiteUsername(),
+                                game.blackUsername(),
+                                game.gameName(),
+                                game.game()
+                        ));
+
+                        broadcastToGame(
+                                game.gameID(),
+                                new NotificationMessage(auth.username() + " resigned the game")
                         );
                         return;
                     }
