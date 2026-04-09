@@ -1,5 +1,6 @@
 package server;
 
+import chess.ChessGame;
 import com.google.gson.Gson;
 import dataaccess.DataAccess;
 import dataaccess.DataAccessException;
@@ -8,6 +9,7 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.websocket.WsContext;
+import model.AuthData;
 import model.GameData;
 import service.ClearService;
 import service.GameService;
@@ -15,6 +17,7 @@ import service.LoginRequest;
 import service.LogoutRequest;
 import service.RegisterRequest;
 import service.UserService;
+import websocket.commands.MakeMoveCommand;
 import websocket.commands.UserGameCommand;
 import websocket.messages.ErrorMessage;
 import websocket.messages.LoadGameMessage;
@@ -88,14 +91,14 @@ public class Server {
 
                     if (command.getCommandType() == UserGameCommand.CommandType.CONNECT) {
 
-                        var auth = dao.getAuth(command.getAuthToken());
+                        AuthData auth = dao.getAuth(command.getAuthToken());
                         if (auth == null) {
                             ErrorMessage error = new ErrorMessage("Error: unauthorized");
                             messageContext.send(gson.toJson(error));
                             return;
                         }
 
-                        var game = dao.getGame(command.getGameID());
+                        GameData game = dao.getGame(command.getGameID());
                         if (game == null) {
                             ErrorMessage error = new ErrorMessage("Error: bad request");
                             messageContext.send(gson.toJson(error));
@@ -119,6 +122,50 @@ public class Server {
 
                         LoadGameMessage loadGameMessage = new LoadGameMessage(game.game());
                         messageContext.send(gson.toJson(loadGameMessage));
+                        return;
+                    }
+
+                    if (command.getCommandType() == UserGameCommand.CommandType.MAKE_MOVE) {
+                        MakeMoveCommand moveCommand = gson.fromJson(messageContext.message(), MakeMoveCommand.class);
+
+                        AuthData auth = dao.getAuth(moveCommand.getAuthToken());
+                        if (auth == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: unauthorized")));
+                            return;
+                        }
+
+                        GameData game = dao.getGame(moveCommand.getGameID());
+                        if (game == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: bad request")));
+                            return;
+                        }
+
+                        if (isObserver(auth, game)) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: observers cannot make moves")));
+                            return;
+                        }
+
+                        if (!isPlayersTurn(auth, game)) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: not your turn")));
+                            return;
+                        }
+
+                        game.game().makeMove(moveCommand.getMove());
+
+                        dao.updateGame(new GameData(
+                                game.gameID(),
+                                game.whiteUsername(),
+                                game.blackUsername(),
+                                game.gameName(),
+                                game.game()
+                        ));
+
+                        broadcastToGame(game.gameID(), new LoadGameMessage(game.game()));
+                        broadcastToOthers(
+                                game.gameID(),
+                                messageContext,
+                                new NotificationMessage(auth.username() + " made a move")
+                        );
                         return;
                     }
 
@@ -278,6 +325,47 @@ public class Server {
     public void stop() {
         if (javalin != null) {
             javalin.stop();
+        }
+    }
+
+    private void broadcastToGame(int gameID, Object message) {
+        Set<WsContext> sessions = gameSessions.get(gameID);
+        if (sessions == null) {
+            return;
+        }
+
+        String json = gson.toJson(message);
+        for (WsContext session : sessions) {
+            session.send(json);
+        }
+    }
+
+    private void broadcastToOthers(int gameID, WsContext exclude, Object message) {
+        Set<WsContext> sessions = gameSessions.get(gameID);
+        if (sessions == null) {
+            return;
+        }
+
+        String json = gson.toJson(message);
+        for (WsContext session : sessions) {
+            if (session != exclude) {
+                session.send(json);
+            }
+        }
+    }
+
+    private boolean isObserver(AuthData auth, GameData game) {
+        return !auth.username().equals(game.whiteUsername()) &&
+                !auth.username().equals(game.blackUsername());
+    }
+
+    private boolean isPlayersTurn(AuthData auth, GameData game) {
+        ChessGame.TeamColor teamTurn = game.game().getTeamTurn();
+
+        if (teamTurn == ChessGame.TeamColor.WHITE) {
+            return auth.username().equals(game.whiteUsername());
+        } else {
+            return auth.username().equals(game.blackUsername());
         }
     }
 
