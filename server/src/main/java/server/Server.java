@@ -7,6 +7,7 @@ import dataaccess.MySqlDataAccess;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
+import io.javalin.websocket.WsContext;
 import model.GameData;
 import service.ClearService;
 import service.GameService;
@@ -17,10 +18,15 @@ import service.UserService;
 import websocket.commands.UserGameCommand;
 import websocket.messages.ErrorMessage;
 import websocket.messages.LoadGameMessage;
+import websocket.messages.NotificationMessage;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 public class Server {
 
@@ -32,6 +38,8 @@ public class Server {
     private final ClearService clearService;
     private final UserService userService;
     private final GameService gameService;
+
+    private final Map<Integer, Set<WsContext>> gameSessions = new HashMap<>();
 
     private record JoinBody(String playerColor, Integer gameID) {}
 
@@ -94,6 +102,21 @@ public class Server {
                             return;
                         }
 
+                        gameSessions.putIfAbsent(command.getGameID(), new HashSet<>());
+                        Set<WsContext> sessions = gameSessions.get(command.getGameID());
+
+                        String username = auth.username();
+                        String noticeText = username + " joined the game";
+
+                        for (WsContext session : sessions) {
+                            if (session != messageContext) {
+                                NotificationMessage notification = new NotificationMessage(noticeText);
+                                session.send(gson.toJson(notification));
+                            }
+                        }
+
+                        sessions.add(messageContext);
+
                         LoadGameMessage loadGameMessage = new LoadGameMessage(game.game());
                         messageContext.send(gson.toJson(loadGameMessage));
                         return;
@@ -105,6 +128,12 @@ public class Server {
                 } catch (Exception e) {
                     ErrorMessage error = new ErrorMessage("Error: " + e.getMessage());
                     messageContext.send(gson.toJson(error));
+                }
+            });
+
+            ctx.onClose(closeContext -> {
+                for (Set<WsContext> sessions : gameSessions.values()) {
+                    sessions.remove(closeContext);
                 }
             });
         });
