@@ -90,38 +90,31 @@ public class Server {
                     System.out.println("WebSocket command: " + command.getCommandType());
 
                     if (command.getCommandType() == UserGameCommand.CommandType.CONNECT) {
-
                         AuthData auth = dao.getAuth(command.getAuthToken());
                         if (auth == null) {
-                            ErrorMessage error = new ErrorMessage("Error: unauthorized");
-                            messageContext.send(gson.toJson(error));
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: unauthorized")));
                             return;
                         }
 
                         GameData game = dao.getGame(command.getGameID());
                         if (game == null) {
-                            ErrorMessage error = new ErrorMessage("Error: bad request");
-                            messageContext.send(gson.toJson(error));
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: bad request")));
                             return;
                         }
 
                         gameSessions.putIfAbsent(command.getGameID(), new HashSet<>());
                         Set<WsContext> sessions = gameSessions.get(command.getGameID());
 
-                        String username = auth.username();
-                        String noticeText = username + " joined the game";
-
                         for (WsContext session : sessions) {
                             if (session != messageContext) {
-                                NotificationMessage notification = new NotificationMessage(noticeText);
-                                session.send(gson.toJson(notification));
+                                session.send(gson.toJson(
+                                        new NotificationMessage(auth.username() + " joined the game")
+                                ));
                             }
                         }
 
                         sessions.add(messageContext);
-
-                        LoadGameMessage loadGameMessage = new LoadGameMessage(game.game());
-                        messageContext.send(gson.toJson(loadGameMessage));
+                        messageContext.send(gson.toJson(new LoadGameMessage(game.game())));
                         return;
                     }
 
@@ -155,7 +148,12 @@ public class Server {
                             return;
                         }
 
-                        game.game().makeMove(moveCommand.getMove());
+                        try {
+                            game.game().makeMove(moveCommand.getMove());
+                        } catch (Exception e) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: invalid move")));
+                            return;
+                        }
 
                         dao.updateGame(new GameData(
                                 game.gameID(),
@@ -166,10 +164,15 @@ public class Server {
                         ));
 
                         broadcastToGame(game.gameID(), new LoadGameMessage(game.game()));
+
+                        String moveText = moveCommand.getMove().getStartPosition()
+                                + " to "
+                                + moveCommand.getMove().getEndPosition();
+
                         broadcastToOthers(
                                 game.gameID(),
                                 messageContext,
-                                new NotificationMessage(auth.username() + " made a move")
+                                new NotificationMessage(auth.username() + " moved from " + moveText)
                         );
                         return;
                     }
@@ -214,12 +217,35 @@ public class Server {
                         return;
                     }
 
-                    ErrorMessage error = new ErrorMessage("Error: websocket reached server");
-                    messageContext.send(gson.toJson(error));
+                    if (command.getCommandType() == UserGameCommand.CommandType.LEAVE) {
+                        AuthData auth = dao.getAuth(command.getAuthToken());
+                        if (auth == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: unauthorized")));
+                            return;
+                        }
+
+                        GameData game = dao.getGame(command.getGameID());
+                        if (game == null) {
+                            messageContext.send(gson.toJson(new ErrorMessage("Error: bad request")));
+                            return;
+                        }
+
+                        Set<WsContext> sessions = gameSessions.get(command.getGameID());
+                        if (sessions != null) {
+                            sessions.remove(messageContext);
+                        }
+
+                        broadcastToGame(
+                                command.getGameID(),
+                                new NotificationMessage(auth.username() + " left the game")
+                        );
+                        return;
+                    }
+
+                    messageContext.send(gson.toJson(new ErrorMessage("Error: websocket reached server")));
 
                 } catch (Exception e) {
-                    ErrorMessage error = new ErrorMessage("Error: " + e.getMessage());
-                    messageContext.send(gson.toJson(error));
+                    messageContext.send(gson.toJson(new ErrorMessage("Error: " + e.getMessage())));
                 }
             });
 
@@ -375,7 +401,7 @@ public class Server {
 
     private void broadcastToGame(int gameID, Object message) {
         Set<WsContext> sessions = gameSessions.get(gameID);
-        if (sessions == null) {
+        if (sessions == null || sessions.isEmpty()) {
             return;
         }
 
@@ -387,7 +413,7 @@ public class Server {
 
     private void broadcastToOthers(int gameID, WsContext exclude, Object message) {
         Set<WsContext> sessions = gameSessions.get(gameID);
-        if (sessions == null) {
+        if (sessions == null || sessions.isEmpty()) {
             return;
         }
 
