@@ -26,10 +26,8 @@ import websocket.messages.NotificationMessage;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 public class Server {
 
@@ -42,7 +40,7 @@ public class Server {
     private final UserService userService;
     private final GameService gameService;
 
-    private final Map<Integer, Set<WsContext>> gameSessions = new HashMap<>();
+    private final Map<Integer, Map<String, WsContext>> gameSessions = new HashMap<>();
 
     private record JoinBody(String playerColor, Integer gameID) {}
 
@@ -80,9 +78,7 @@ public class Server {
         });
 
         javalin.ws("/ws", ctx -> {
-            ctx.onConnect(session -> {
-                System.out.println("WebSocket connected");
-            });
+            ctx.onConnect(session -> System.out.println("WebSocket connected"));
 
             ctx.onMessage(messageContext -> {
                 try {
@@ -102,18 +98,16 @@ public class Server {
                             return;
                         }
 
-                        gameSessions.putIfAbsent(command.getGameID(), new HashSet<>());
-                        Set<WsContext> sessions = gameSessions.get(command.getGameID());
+                        gameSessions.putIfAbsent(command.getGameID(), new HashMap<>());
+                        Map<String, WsContext> sessions = gameSessions.get(command.getGameID());
 
-                        for (WsContext session : sessions) {
-                            if (session != messageContext) {
-                                session.send(gson.toJson(
-                                        new NotificationMessage(auth.username() + " joined the game")
-                                ));
-                            }
-                        }
+                        broadcastToOthers(
+                                command.getGameID(),
+                                auth.username(),
+                                new NotificationMessage(auth.username() + " joined the game")
+                        );
 
-                        sessions.add(messageContext);
+                        sessions.put(auth.username(), messageContext);
                         messageContext.send(gson.toJson(new LoadGameMessage(game.game())));
                         return;
                     }
@@ -155,6 +149,18 @@ public class Server {
                             return;
                         }
 
+                        boolean endedInCheckmateWhite = game.game().isInCheckmate(ChessGame.TeamColor.WHITE);
+                        boolean endedInCheckmateBlack = game.game().isInCheckmate(ChessGame.TeamColor.BLACK);
+                        boolean endedInStalemateWhite = game.game().isInStalemate(ChessGame.TeamColor.WHITE);
+                        boolean endedInStalemateBlack = game.game().isInStalemate(ChessGame.TeamColor.BLACK);
+
+                        boolean gameEnded = endedInCheckmateWhite || endedInCheckmateBlack
+                                || endedInStalemateWhite || endedInStalemateBlack;
+
+                        if (gameEnded) {
+                            game.game().setGameOver(true);
+                        }
+
                         dao.updateGame(new GameData(
                                 game.gameID(),
                                 game.whiteUsername(),
@@ -163,17 +169,26 @@ public class Server {
                                 game.game()
                         ));
 
-                        broadcastToGame(game.gameID(), new LoadGameMessage(game.game()));
-
-                        String moveText = moveCommand.getMove().getStartPosition()
-                                + " to "
-                                + moveCommand.getMove().getEndPosition();
+                        String moveText = toSquare(moveCommand.getMove().getStartPosition())
+                                + " to " +
+                                toSquare(moveCommand.getMove().getEndPosition());
 
                         broadcastToOthers(
                                 game.gameID(),
-                                messageContext,
+                                auth.username(),
                                 new NotificationMessage(auth.username() + " moved from " + moveText)
                         );
+
+                        broadcastToGame(game.gameID(), new LoadGameMessage(game.game()));
+
+                        if (endedInCheckmateWhite) {
+                            broadcastToGame(game.gameID(), new NotificationMessage("white is in checkmate"));
+                        } else if (endedInCheckmateBlack) {
+                            broadcastToGame(game.gameID(), new NotificationMessage("black is in checkmate"));
+                        } else if (endedInStalemateWhite || endedInStalemateBlack) {
+                            broadcastToGame(game.gameID(), new NotificationMessage("stalemate"));
+                        }
+
                         return;
                     }
 
@@ -230,9 +245,26 @@ public class Server {
                             return;
                         }
 
-                        Set<WsContext> sessions = gameSessions.get(command.getGameID());
+                        String white = game.whiteUsername();
+                        String black = game.blackUsername();
+
+                        if (auth.username().equals(white)) {
+                            white = null;
+                        } else if (auth.username().equals(black)) {
+                            black = null;
+                        }
+
+                        dao.updateGame(new GameData(
+                                game.gameID(),
+                                white,
+                                black,
+                                game.gameName(),
+                                game.game()
+                        ));
+
+                        Map<String, WsContext> sessions = gameSessions.get(command.getGameID());
                         if (sessions != null) {
-                            sessions.remove(messageContext);
+                            sessions.remove(auth.username());
                         }
 
                         broadcastToGame(
@@ -250,8 +282,8 @@ public class Server {
             });
 
             ctx.onClose(closeContext -> {
-                for (Set<WsContext> sessions : gameSessions.values()) {
-                    sessions.remove(closeContext);
+                for (Map<String, WsContext> sessions : gameSessions.values()) {
+                    sessions.values().remove(closeContext);
                 }
             });
         });
@@ -400,27 +432,27 @@ public class Server {
     }
 
     private void broadcastToGame(int gameID, Object message) {
-        Set<WsContext> sessions = gameSessions.get(gameID);
+        Map<String, WsContext> sessions = gameSessions.get(gameID);
         if (sessions == null || sessions.isEmpty()) {
             return;
         }
 
         String json = gson.toJson(message);
-        for (WsContext session : sessions) {
+        for (WsContext session : sessions.values()) {
             session.send(json);
         }
     }
 
-    private void broadcastToOthers(int gameID, WsContext exclude, Object message) {
-        Set<WsContext> sessions = gameSessions.get(gameID);
+    private void broadcastToOthers(int gameID, String excludeUsername, Object message) {
+        Map<String, WsContext> sessions = gameSessions.get(gameID);
         if (sessions == null || sessions.isEmpty()) {
             return;
         }
 
         String json = gson.toJson(message);
-        for (WsContext session : sessions) {
-            if (session != exclude) {
-                session.send(json);
+        for (Map.Entry<String, WsContext> entry : sessions.entrySet()) {
+            if (!entry.getKey().equals(excludeUsername)) {
+                entry.getValue().send(json);
             }
         }
     }
@@ -438,6 +470,12 @@ public class Server {
         } else {
             return auth.username().equals(game.blackUsername());
         }
+    }
+
+    private String toSquare(chess.ChessPosition position) {
+        char file = (char) ('a' + position.getColumn() - 1);
+        int rank = position.getRow();
+        return "" + file + rank;
     }
 
     private void handleDataAccessError(Context ctx, DataAccessException e) {
