@@ -101,10 +101,19 @@ public class Server {
                         gameSessions.putIfAbsent(command.getGameID(), new HashMap<>());
                         Map<String, WsContext> sessions = gameSessions.get(command.getGameID());
 
+                        String connectMessage;
+                        if (auth.username().equals(game.whiteUsername())) {
+                            connectMessage = auth.username() + " connected as white";
+                        } else if (auth.username().equals(game.blackUsername())) {
+                            connectMessage = auth.username() + " connected as black";
+                        } else {
+                            connectMessage = auth.username() + " connected as an observer";
+                        }
+
                         broadcastToOthers(
                                 command.getGameID(),
                                 auth.username(),
-                                new NotificationMessage(auth.username() + " joined the game")
+                                new NotificationMessage(connectMessage)
                         );
 
                         sessions.put(auth.username(), messageContext);
@@ -149,6 +158,9 @@ public class Server {
                             return;
                         }
 
+                        ChessGame.TeamColor teamTurn = game.game().getTeamTurn();
+                        boolean inCheck = game.game().isInCheck(teamTurn);
+
                         boolean endedInCheckmateWhite = game.game().isInCheckmate(ChessGame.TeamColor.WHITE);
                         boolean endedInCheckmateBlack = game.game().isInCheckmate(ChessGame.TeamColor.BLACK);
                         boolean endedInStalemateWhite = game.game().isInStalemate(ChessGame.TeamColor.WHITE);
@@ -187,6 +199,9 @@ public class Server {
                             broadcastToGame(game.gameID(), new NotificationMessage("black is in checkmate"));
                         } else if (endedInStalemateWhite || endedInStalemateBlack) {
                             broadcastToGame(game.gameID(), new NotificationMessage("stalemate"));
+                        } else if (inCheck) {
+                            String checkedSide = (teamTurn == ChessGame.TeamColor.WHITE) ? "white" : "black";
+                            broadcastToGame(game.gameID(), new NotificationMessage(checkedSide + " is in check"));
                         }
 
                         return;
@@ -267,8 +282,9 @@ public class Server {
                             sessions.remove(auth.username());
                         }
 
-                        broadcastToGame(
+                        broadcastToOthers(
                                 command.getGameID(),
+                                auth.username(),
                                 new NotificationMessage(auth.username() + " left the game")
                         );
                         return;

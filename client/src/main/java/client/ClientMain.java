@@ -1,33 +1,49 @@
 package client;
 
+import chess.*;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import model.GameData;
+import websocket.commands.MakeMoveCommand;
+import websocket.commands.UserGameCommand;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.WebSocket;
+import java.util.*;
+import java.util.concurrent.CompletionStage;
 
 public class ClientMain {
 
     private final Scanner scanner = new Scanner(System.in);
     private final ServerFacade facade;
+    private final Gson gson = new Gson();
 
     private boolean running = true;
     private boolean loggedIn = false;
+
     private String authToken = null;
     private String username = null;
 
     private List<GameData> lastListedGames = new ArrayList<>();
 
-    // ANSI colors
+    // gameplay state
+    private boolean inGameplay = false;
+    private Integer currentGameID = null;
+    private boolean blackPerspective = false;
+    private boolean observerMode = false;
+    private ChessGame currentGame = null;
+    private WebSocket ws = null;
+
     private static final String RESET = "\u001B[0m";
     private static final String BLACK_TEXT = "\u001B[30m";
     private static final String RED_TEXT = "\u001B[31m";
     private static final String BLUE_TEXT = "\u001B[34m";
-    private static final String WHITE_TEXT = "\u001B[37m";
 
-    private static final String BLACK_BG = "\u001B[40m";
     private static final String LIGHT_BG = "\u001B[47m";
     private static final String DARK_BG = "\u001B[100m";
+    private static final String HIGHLIGHT_BG = "\u001B[42m";
+    private static final String SELECT_BG = "\u001B[43m";
 
     public ClientMain() {
         this("http://localhost:8080");
@@ -51,7 +67,10 @@ public class ClientMain {
 
         while (running) {
             try {
-                if (!loggedIn) {
+                if (inGameplay) {
+                    System.out.print("\n[GAMEPLAY] >>> ");
+                    evalGameplay(scanner.nextLine().trim().toLowerCase());
+                } else if (!loggedIn) {
                     System.out.print("\n[LOGGED_OUT] >>> ");
                     evalLoggedOut(scanner.nextLine().trim().toLowerCase());
                 } else {
@@ -72,6 +91,7 @@ public class ClientMain {
             case "quit" -> {
                 System.out.println("Goodbye");
                 running = false;
+                closeWebSocket();
             }
             default -> System.out.println("Unknown command");
         }
@@ -88,7 +108,20 @@ public class ClientMain {
             case "quit" -> {
                 System.out.println("Goodbye");
                 running = false;
+                closeWebSocket();
             }
+            default -> System.out.println("Unknown command");
+        }
+    }
+
+    private void evalGameplay(String input) {
+        switch (input) {
+            case "help" -> System.out.println(gameplayHelp());
+            case "redraw", "redraw chess board" -> redrawBoard();
+            case "leave" -> leaveGame();
+            case "move", "make move" -> makeMove();
+            case "resign" -> resignGame();
+            case "highlight", "highlight legal moves" -> highlightLegalMoves();
             default -> System.out.println("Unknown command");
         }
     }
@@ -193,22 +226,8 @@ public class ClientMain {
 
     private void playGame() {
         try {
-            if (lastListedGames.isEmpty()) {
-                System.out.println("Error: no listed games found");
-                return;
-            }
-
-            System.out.print("Enter game number: ");
-            int choice;
-            try {
-                choice = Integer.parseInt(scanner.nextLine());
-            } catch (NumberFormatException e) {
-                System.out.println("Error: invalid game number");
-                return;
-            }
-
-            if (choice < 1 || choice > lastListedGames.size()) {
-                System.out.println("Error: invalid game number");
+            GameData game = chooseGame();
+            if (game == null) {
                 return;
             }
 
@@ -220,13 +239,18 @@ public class ClientMain {
                 return;
             }
 
-            GameData game = lastListedGames.get(choice - 1);
-
             facade.joinGame(color, game.gameID(), authToken);
 
-            System.out.println("Joined game: " + game.gameName() + " as " + color);
+            observerMode = false;
+            blackPerspective = color.equals("BLACK");
+            currentGameID = game.gameID();
 
-            drawBoard(color.equals("BLACK"));
+            connectWebSocket();
+            sendCommand(new UserGameCommand(UserGameCommand.CommandType.CONNECT, authToken, currentGameID));
+
+            inGameplay = true;
+            System.out.println("Joined game: " + game.gameName() + " as " + color);
+            System.out.println(gameplayHelp());
 
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
@@ -235,99 +259,278 @@ public class ClientMain {
 
     private void observeGame() {
         try {
-            if (lastListedGames.isEmpty()) {
-                System.out.println("Error: no listed games found");
+            GameData game = chooseGame();
+            if (game == null) {
                 return;
             }
 
-            System.out.print("Enter game number: ");
-            int choice;
-            try {
-                choice = Integer.parseInt(scanner.nextLine());
-            } catch (NumberFormatException e) {
-                System.out.println("Error: invalid game number");
-                return;
-            }
+            observerMode = true;
+            blackPerspective = false;
+            currentGameID = game.gameID();
 
-            if (choice < 1 || choice > lastListedGames.size()) {
-                System.out.println("Error: invalid game number");
-                return;
-            }
+            connectWebSocket();
+            sendCommand(new UserGameCommand(UserGameCommand.CommandType.CONNECT, authToken, currentGameID));
 
-            GameData game = lastListedGames.get(choice - 1);
-
+            inGameplay = true;
             System.out.println("Observing game: " + game.gameName());
-
-            drawBoard(false);
+            System.out.println(gameplayHelp());
 
         } catch (Exception e) {
             System.out.println("Error: " + friendlyMessage(e));
         }
     }
 
-    private void drawBoard(boolean blackPerspective) {
-        String[][] board = {
-                {"r", "n", "b", "q", "k", "b", "n", "r"},
-                {"p", "p", "p", "p", "p", "p", "p", "p"},
-                {" ", " ", " ", " ", " ", " ", " ", " "},
-                {" ", " ", " ", " ", " ", " ", " ", " "},
-                {" ", " ", " ", " ", " ", " ", " ", " "},
-                {" ", " ", " ", " ", " ", " ", " ", " "},
-                {"P", "P", "P", "P", "P", "P", "P", "P"},
-                {"R", "N", "B", "Q", "K", "B", "N", "R"}
+    private GameData chooseGame() {
+        try {
+            if (lastListedGames.isEmpty()) {
+                System.out.println("Error: no listed games found");
+                return null;
+            }
+
+            System.out.print("Enter game number: ");
+            int choice = Integer.parseInt(scanner.nextLine());
+
+            if (choice < 1 || choice > lastListedGames.size()) {
+                System.out.println("Error: invalid game number");
+                return null;
+            }
+
+            return lastListedGames.get(choice - 1);
+        } catch (NumberFormatException e) {
+            System.out.println("Error: invalid game number");
+            return null;
+        }
+    }
+
+    private void connectWebSocket() throws Exception {
+        closeWebSocket();
+
+        String httpUrl = facade.getServerUrl();
+        String wsUrl;
+        if (httpUrl.startsWith("https://")) {
+            wsUrl = "wss://" + httpUrl.substring("https://".length()) + "/ws";
+        } else if (httpUrl.startsWith("http://")) {
+            wsUrl = "ws://" + httpUrl.substring("http://".length()) + "/ws";
+        } else {
+            wsUrl = "ws://" + httpUrl + "/ws";
+        }
+
+        ws = HttpClient.newHttpClient()
+                .newWebSocketBuilder()
+                .buildAsync(URI.create(wsUrl), new ChessWebSocketListener())
+                .join();
+    }
+
+    private void closeWebSocket() {
+        try {
+            if (ws != null) {
+                ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye").join();
+            }
+        } catch (Exception ignored) {
+        }
+        ws = null;
+    }
+
+    private void sendCommand(UserGameCommand command) {
+        if (ws == null) {
+            System.out.println("Error: not connected to gameplay");
+            return;
+        }
+        ws.sendText(gson.toJson(command), true);
+    }
+
+    private void makeMove() {
+        try {
+            if (observerMode) {
+                System.out.println("Error: observers cannot make moves");
+                return;
+            }
+
+            System.out.print("Start square (example e2): ");
+            ChessPosition start = parseSquare(scanner.nextLine());
+
+            System.out.print("End square (example e4): ");
+            ChessPosition end = parseSquare(scanner.nextLine());
+
+            ChessPiece.PieceType promotion = null;
+            if (isPromotionRow(end)) {
+                System.out.print("Promotion piece (QUEEN/ROOK/BISHOP/KNIGHT or blank): ");
+                String promoText = scanner.nextLine().trim().toUpperCase();
+                if (!promoText.isBlank()) {
+                    promotion = ChessPiece.PieceType.valueOf(promoText);
+                }
+            }
+
+            ChessMove move = new ChessMove(start, end, promotion);
+            sendCommand(new MakeMoveCommand(authToken, currentGameID, move));
+
+        } catch (IllegalArgumentException e) {
+            System.out.println("Error: invalid square or promotion");
+        } catch (Exception e) {
+            System.out.println("Error: " + friendlyMessage(e));
+        }
+    }
+
+    private void resignGame() {
+        try {
+            if (observerMode) {
+                System.out.println("Error: observers cannot resign");
+                return;
+            }
+
+            System.out.print("Are you sure you want to resign? (yes/no): ");
+            String answer = scanner.nextLine().trim().toLowerCase();
+            if (!answer.equals("yes")) {
+                System.out.println("Resign cancelled");
+                return;
+            }
+
+            sendCommand(new UserGameCommand(UserGameCommand.CommandType.RESIGN, authToken, currentGameID));
+
+        } catch (Exception e) {
+            System.out.println("Error: " + friendlyMessage(e));
+        }
+    }
+
+    private void leaveGame() {
+        try {
+            sendCommand(new UserGameCommand(UserGameCommand.CommandType.LEAVE, authToken, currentGameID));
+        } catch (Exception e) {
+            System.out.println("Error: " + friendlyMessage(e));
+        } finally {
+            inGameplay = false;
+            observerMode = false;
+            currentGameID = null;
+            currentGame = null;
+            closeWebSocket();
+            System.out.println("Returned to post-login menu");
+        }
+    }
+
+    private void redrawBoard() {
+        if (currentGame == null) {
+            System.out.println("Board not loaded yet");
+            return;
+        }
+        drawBoard(currentGame, blackPerspective, null, null);
+    }
+
+    private void highlightLegalMoves() {
+        try {
+            if (currentGame == null) {
+                System.out.println("Board not loaded yet");
+                return;
+            }
+
+            System.out.print("Square to highlight (example e2): ");
+            ChessPosition pos = parseSquare(scanner.nextLine());
+
+            Collection<ChessMove> moves = currentGame.validMoves(pos);
+            if (moves == null) {
+                moves = new ArrayList<>();
+            }
+
+            Set<String> highlights = new HashSet<>();
+            for (ChessMove move : moves) {
+                highlights.add(key(move.getEndPosition()));
+            }
+
+            drawBoard(currentGame, blackPerspective, key(pos), highlights);
+
+        } catch (Exception e) {
+            System.out.println("Error: " + friendlyMessage(e));
+        }
+    }
+
+    private void drawBoard(ChessGame game, boolean blackPerspective, String selected, Set<String> highlights) {
+        ChessBoard board = game.getBoard();
+
+        System.out.println();
+        if (!blackPerspective) {
+            System.out.println("    a  b  c  d  e  f  g  h");
+            for (int row = 8; row >= 1; row--) {
+                System.out.print(" " + row + " ");
+                for (int col = 1; col <= 8; col++) {
+                    printSquare(board, row, col, selected, highlights);
+                }
+                System.out.println(RESET + " " + row);
+            }
+            System.out.println("    a  b  c  d  e  f  g  h");
+        } else {
+            System.out.println("    h  g  f  e  d  c  b  a");
+            for (int row = 1; row <= 8; row++) {
+                System.out.print(" " + row + " ");
+                for (int col = 8; col >= 1; col--) {
+                    printSquare(board, row, col, selected, highlights);
+                }
+                System.out.println(RESET + " " + row);
+            }
+            System.out.println("    h  g  f  e  d  c  b  a");
+        }
+        System.out.println();
+    }
+
+    private void printSquare(ChessBoard board, int row, int col, String selected, Set<String> highlights) {
+        ChessPosition pos = new ChessPosition(row, col);
+        ChessPiece piece = board.getPiece(pos);
+
+        boolean lightSquare = (row + col) % 2 == 0;
+        String background = lightSquare ? LIGHT_BG : DARK_BG;
+
+        String key = key(pos);
+        if (selected != null && selected.equals(key)) {
+            background = SELECT_BG;
+        } else if (highlights != null && highlights.contains(key)) {
+            background = HIGHLIGHT_BG;
+        }
+
+        String display = pieceToSymbol(piece);
+        String textColor = BLACK_TEXT;
+
+        if (piece != null) {
+            if (piece.getTeamColor() == ChessGame.TeamColor.WHITE) {
+                textColor = RED_TEXT;
+            } else {
+                textColor = BLUE_TEXT;
+            }
+        }
+
+        System.out.print(background + textColor + " " + display + " " + RESET);
+    }
+
+    private String pieceToSymbol(ChessPiece piece) {
+        if (piece == null) return ".";
+        return switch (piece.getPieceType()) {
+            case KING -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "K" : "k";
+            case QUEEN -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "Q" : "q";
+            case ROOK -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "R" : "r";
+            case BISHOP -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "B" : "b";
+            case KNIGHT -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "N" : "n";
+            case PAWN -> piece.getTeamColor() == ChessGame.TeamColor.WHITE ? "P" : "p";
         };
-
-        if (blackPerspective) {
-            printBlackBoard(board);
-        } else {
-            printWhiteBoard(board);
-        }
     }
 
-    private void printWhiteBoard(String[][] board) {
-        System.out.println();
-        System.out.println("    a  b  c  d  e  f  g  h");
+    private ChessPosition parseSquare(String text) {
+        text = text.trim().toLowerCase();
+        if (text.length() != 2) throw new IllegalArgumentException();
 
-        for (int row = 0; row < 8; row++) {
-            int displayRow = 8 - row;
-            System.out.print(" " + displayRow + " ");
+        char file = text.charAt(0);
+        char rank = text.charAt(1);
 
-            for (int col = 0; col < 8; col++) {
-                printSquare(board[row][col]);
-            }
+        if (file < 'a' || file > 'h') throw new IllegalArgumentException();
+        if (rank < '1' || rank > '8') throw new IllegalArgumentException();
 
-            System.out.println(" " + displayRow);
-        }
-
-        System.out.println("    a  b  c  d  e  f  g  h");
-        System.out.println();
+        int col = file - 'a' + 1;
+        int row = rank - '0';
+        return new ChessPosition(row, col);
     }
 
-    private void printBlackBoard(String[][] board) {
-        System.out.println();
-        System.out.println("    h  g  f  e  d  c  b  a");
-
-        for (int row = 7; row >= 0; row--) {
-            int displayRow = 8 - row;
-            System.out.print(" " + displayRow + " ");
-
-            for (int col = 7; col >= 0; col--) {
-                printSquare(board[row][col]);
-            }
-
-            System.out.println(" " + displayRow);
-        }
-
-        System.out.println("    h  g  f  e  d  c  b  a");
-        System.out.println();
+    private boolean isPromotionRow(ChessPosition end) {
+        return end.getRow() == 1 || end.getRow() == 8;
     }
 
-    private void printSquare(String piece) {
-        if (piece.equals(" ")) {
-            System.out.print(" . ");
-        } else {
-            System.out.print(" " + piece + " ");
-        }
+    private String key(ChessPosition pos) {
+        return pos.getRow() + "," + pos.getColumn();
     }
 
     private String friendlyMessage(Exception e) {
@@ -363,5 +566,59 @@ public class ClientMain {
                 observe game  - watch a game
                 quit          - exit
                 """;
+    }
+
+    private String gameplayHelp() {
+        return """
+                help       - show gameplay commands
+                redraw     - redraw chess board
+                leave      - leave the game
+                move       - make a move
+                resign     - resign the game
+                highlight  - highlight legal moves for a piece
+                """;
+    }
+
+    private class ChessWebSocketListener implements WebSocket.Listener {
+        private final StringBuilder buffer = new StringBuilder();
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            WebSocket.Listener.super.onOpen(webSocket);
+        }
+
+        @Override
+        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            buffer.append(data);
+            if (last) {
+                String message = buffer.toString();
+                buffer.setLength(0);
+                handleServerMessage(message);
+            }
+            return WebSocket.Listener.super.onText(webSocket, data, last);
+        }
+
+        private void handleServerMessage(String json) {
+            try {
+                JsonObject obj = gson.fromJson(json, JsonObject.class);
+                String type = obj.get("serverMessageType").getAsString();
+
+                switch (type) {
+                    case "LOAD_GAME" -> {
+                        currentGame = gson.fromJson(obj.get("game"), ChessGame.class);
+                        drawBoard(currentGame, blackPerspective, null, null);
+                    }
+                    case "NOTIFICATION" -> {
+                        System.out.println("\n[Notification] " + obj.get("message").getAsString());
+                    }
+                    case "ERROR" -> {
+                        System.out.println("\n" + obj.get("errorMessage").getAsString());
+                    }
+                    default -> System.out.println("\nUnknown server message: " + json);
+                }
+            } catch (Exception e) {
+                System.out.println("\nError reading server message: " + e.getMessage());
+            }
+        }
     }
 }

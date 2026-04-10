@@ -33,7 +33,7 @@ public class GameService {
         }
 
         GameData game = new GameData(
-                0,              // DAO assigns real ID
+                0,
                 null,
                 null,
                 gameName,
@@ -48,7 +48,6 @@ public class GameService {
             throw new DataAccessException("unauthorized");
         }
 
-        // Standard API tests treat null/blank as bad request (observer join comes later)
         if (playerColor == null || playerColor.isBlank()) {
             throw new DataAccessException("bad request");
         }
@@ -57,15 +56,14 @@ public class GameService {
         GameData game = dataAccess.getGame(gameID);
 
         if (game == null) {
-            // IMPORTANT: your Server should map "game not found" -> 400, not 401
             throw new DataAccessException("game not found");
         }
 
         String username = auth.username();
 
         if (playerColor.equalsIgnoreCase("WHITE")) {
-            if (game.whiteUsername() != null) {
-                throw new DataAccessException("already taken"); // Server maps to 403
+            if (game.whiteUsername() != null && !game.whiteUsername().equals(username)) {
+                throw new DataAccessException("already taken");
             }
             game = new GameData(
                     game.gameID(),
@@ -75,8 +73,8 @@ public class GameService {
                     game.game()
             );
         } else if (playerColor.equalsIgnoreCase("BLACK")) {
-            if (game.blackUsername() != null) {
-                throw new DataAccessException("already taken"); // Server maps to 403
+            if (game.blackUsername() != null && !game.blackUsername().equals(username)) {
+                throw new DataAccessException("already taken");
             }
             game = new GameData(
                     game.gameID(),

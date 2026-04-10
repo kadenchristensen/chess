@@ -22,6 +22,11 @@ public class ServerFacade {
         this.serverUrl = url;
     }
 
+    // ✅ THIS IS THE FIX YOU NEEDED
+    public String getServerUrl() {
+        return serverUrl;
+    }
+
     public AuthData register(String username, String password, String email) throws Exception {
         var body = new RegisterRequest(username, password, email);
         return makeRequest("POST", "/user", body, null, AuthData.class);
